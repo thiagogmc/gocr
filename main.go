@@ -30,6 +30,15 @@ func setupRoutes() {
 func uploadHandler(w http.ResponseWriter, r *http.Request) {
 	fmt.Println("File Upload endpoint hit")
 
+	if (r.Method == "OPTIONS") {
+		fmt.Println("CORS HIT")
+		allowedHeaders := "Content-Type"
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "POST")
+		w.Header().Set("Access-Control-Allow-Headers", allowedHeaders)
+		return
+	}
+
 	r.ParseMultipartForm(10 << 20)
 	file, handler, err := r.FormFile("pdf")
 	if err != nil {
