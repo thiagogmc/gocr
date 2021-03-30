@@ -30,10 +30,10 @@ func setupRoutes() {
 func uploadHandler(w http.ResponseWriter, r *http.Request) {
 	fmt.Println("File Upload endpoint hit")
 
+	w.Header().Set("Access-Control-Allow-Origin", "*")
 	if (r.Method == "OPTIONS") {
 		fmt.Println("CORS HIT")
 		allowedHeaders := "Content-Type"
-		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "POST")
 		w.Header().Set("Access-Control-Allow-Headers", allowedHeaders)
 		return
