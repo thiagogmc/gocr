@@ -5,12 +5,15 @@ import (
 	"fmt"
 	"github.com/gen2brain/go-fitz"
 	"github.com/otiai10/gosseract"
+	"image"
 	"image/png"
 	"io/ioutil"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"time"
 )
 
 func main() {
@@ -28,7 +31,9 @@ func setupRoutes() {
 }
 
 func uploadHandler(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
 	fmt.Println("File Upload endpoint hit")
+	var wg sync.WaitGroup
 
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	if (r.Method == "OPTIONS") {
@@ -68,39 +73,13 @@ func uploadHandler(w http.ResponseWriter, r *http.Request) {
 
 	// write this byte array to our temporary file
 	tempFile.Write(fileBytes)
-	// return that we have successfully uploaded our file!
 
-	doc, err := fitz.New(tempFile.Name())
-	if err != nil {
-		panic(err)
-	}
 
-	defer doc.Close()
-
+	wg.Add(1)
+	convertPdfToImage(tempFile.Name(), &wg)
+	wg.Wait()
 	filePrefix := strings.TrimSuffix(tempFile.Name(), filepath.Ext(tempFile.Name()))
 	filePrefix = filepath.Base(filePrefix)
-	// Extract pages as images
-	for n := 0; n < doc.NumPage(); n++ {
-		img, err := doc.Image(n)
-		if err != nil {
-			fmt.Println("erro extract1")
-			panic(err)
-		}
-
-		f, err := os.Create(filepath.Join("files", fmt.Sprintf(filePrefix+"-%03d.png", n)))
-		if err != nil {
-			fmt.Println("erro extract2")
-			panic(err)
-		}
-
-		err = png.Encode(f, img)
-		if err != nil {
-			fmt.Println("erro extract3")
-			panic(err)
-		}
-
-		f.Close()
-	}
 
 	files, err := filepath.Glob(filepath.Join("files", filePrefix+"-*"))
 	if err != nil {
@@ -108,32 +87,99 @@ func uploadHandler(w http.ResponseWriter, r *http.Request) {
 		panic(err)
 	}
 
+	var wg2 sync.WaitGroup
+	wg2.Add(1)
+	paginas := extrairTextoDeArquivos(files, &wg2)
+	wg2.Wait()
+
+	jsonData, _ := json.Marshal(paginas)
+	fmt.Println("Fim Requisicao")
+	fmt.Println(time.Since(start))
+	fmt.Fprintf(w, string(jsonData))
+	//fmt.Fprintf(w, "time: %s\n", time.Since(start))
+}
+
+func convertPdfToImage(filename string, wg *sync.WaitGroup) {
+	defer wg.Done()
+	fmt.Println("Iniciando pdf to image")
+	doc, err := fitz.New(filename)
+	if err != nil {
+		panic(err)
+	}
+
+	defer doc.Close()
+
+	filePrefix := strings.TrimSuffix(filename, filepath.Ext(filename))
+	filePrefix = filepath.Base(filePrefix)
+	// Extract pages as images
+
+	for n := 0; n < doc.NumPage(); n++ {
+		fmt.Printf("Inicio PNG Pag: %d\n", n)
+		img, err := doc.Image(n)
+		if err != nil {
+			panic(err)
+		}
+		wg.Add(1)
+		go saveImage(img, n, filePrefix, wg)
+	}
+}
+
+func saveImage(img image.Image, n int, filePrefix string, wg *sync.WaitGroup)  {
+	defer wg.Done()
+	f, err := os.Create(filepath.Join("files", fmt.Sprintf(filePrefix+"-%03d.png", n)))
+	if err != nil {
+		fmt.Println("Erro criacao de arquivo de imagem")
+		panic(err)
+		return
+	}
+
+	err = png.Encode(f, img)
+	if err != nil {
+		fmt.Println("Erro no encode png")
+		panic(err)
+		return
+	}
+
+	f.Close()
+	fmt.Printf("Fim PNG pagina: %d\n", n)
+}
+
+func extrairTextoDeArquivos(files []string, wg *sync.WaitGroup) []Page {
+	defer wg.Done()
+	var paginas []Page
+
+	for i, v := range files {
+		page := Page{
+			Page: i,
+		}
+		paginas = append(paginas, page)
+
+		wg.Add(1)
+		fmt.Println("Extraindo texto pag: %d", i)
+		go extrairTexto(v, wg, &page)
+	}
+	return paginas
+}
+
+func extrairTexto(imgPath string, wg *sync.WaitGroup, page *Page) {
+	defer wg.Done()
 	tesseractClient := gosseract.NewClient()
 	tesseractClient.SetLanguage("por")
 	defer tesseractClient.Close()
+	err := tesseractClient.SetImage(imgPath)
 
-	var paginas []Page
-	for i, v := range files {
-		err = tesseractClient.SetImage(v)
-		if err != nil {
-			fmt.Println("Erro set image")
-			panic(err)
-		}
-
-		text, err := tesseractClient.Text()
-
-		if err != nil {
-			fmt.Println("Erro get text")
-			panic(err)
-		}
-
-		paginas = append(paginas, Page{
-			Page: i,
-			Text: text,
-		})
+	if err != nil {
+		fmt.Println("Erro set image")
+		panic(err)
 	}
 
-	jsonData, _ := json.Marshal(paginas)
-	fmt.Fprintf(w, string(jsonData))
-	//fmt.Fprintf(w, "time: %s\n", time.Since(start))
+	text, err := tesseractClient.Text()
+
+	if err != nil {
+		fmt.Println("Erro get text")
+		panic(err)
+	}
+
+	fmt.Println("Fim extracao texto")
+	page.Text = text
 }
