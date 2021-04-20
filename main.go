@@ -23,6 +23,7 @@ func main() {
 type Page struct {
 	Page int    `json:"page"`
 	Text string `json:"text"`
+	ImagePath string
 }
 
 func setupRoutes() {
@@ -87,10 +88,10 @@ func uploadHandler(w http.ResponseWriter, r *http.Request) {
 		panic(err)
 	}
 
-	var wg2 sync.WaitGroup
-	wg2.Add(1)
-	paginas := extrairTextoDeArquivos(files, &wg2)
-	wg2.Wait()
+	//var wg sync.WaitGroup
+	wg.Add(1)
+	paginas := extrairTextoDeArquivos(files, &wg)
+	wg.Wait()
 
 	jsonData, _ := json.Marshal(paginas)
 	fmt.Println("Fim Requisicao")
@@ -147,24 +148,52 @@ func saveImage(img image.Image, n int, filePrefix string, wg *sync.WaitGroup)  {
 func extrairTextoDeArquivos(files []string, wg *sync.WaitGroup) []Page {
 	defer wg.Done()
 	var paginas []Page
+	jobs := make(chan Page, 2)
+	result := make(chan Page, 2)
 
-	for i, v := range files {
-		page := Page{
-			Page: i,
+	go worker(jobs, result)
+	go worker(jobs, result)
+	go worker(jobs, result)
+	go worker(jobs, result)
+	go worker(jobs, result)
+	go worker(jobs, result)
+	go worker(jobs, result)
+	go worker(jobs, result)
+
+	go func() {
+		for i, v := range files {
+			page := Page{
+				Page: i,
+				ImagePath: v,
+			}
+			jobs <- page
 		}
-		paginas = append(paginas, page)
+		println("fechando jobs")
+		close(jobs)
+	}()
 
-		wg.Add(1)
-		fmt.Println("Extraindo texto pag: %d", i)
-		go extrairTexto(v, wg, &page)
+	for page := range result {
+		fmt.Println("paginas", page.Page)
+		paginas = append(paginas, page)
+		if len(paginas) == len(files) {
+			close(result)
+		}
 	}
+
 	return paginas
 }
 
-func extrairTexto(imgPath string, wg *sync.WaitGroup, page *Page) {
-	defer wg.Done()
+func worker(jobs <-chan Page, result chan<- Page) {
+	for page := range jobs {
+		result <- extrairTexto(page)
+	}
+}
+
+func extrairTexto(page Page) Page{
+	fmt.Println("extraindo pagina", page.Page)
 	tesseractClient := gosseract.NewClient()
 	tesseractClient.SetLanguage("por")
+	imgPath := page.ImagePath
 	defer tesseractClient.Close()
 	err := tesseractClient.SetImage(imgPath)
 
@@ -180,6 +209,7 @@ func extrairTexto(imgPath string, wg *sync.WaitGroup, page *Page) {
 		panic(err)
 	}
 
-	fmt.Println("Fim extracao texto")
+	fmt.Println("Fim extracao texto pagina", page.Page)
 	page.Text = text
+	return page
 }
